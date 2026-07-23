@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, AlertCircle, CheckCircle2, ChevronRight, Mic, Phone, PhoneOff, Sparkles, Volume2 } from "lucide-react";
+import { Activity, AlertCircle, CheckCircle2, ChevronRight, Mic, MicOff, Phone, PhoneOff, Sparkles, Volume2 } from "lucide-react";
 import { DIFFICULTIES, SCENARIOS, type Difficulty, type Feedback, type ScenarioId, type TranscriptTurn } from "@/lib/sales-simulator";
 
 type CallStatus = "ready" | "connecting" | "in-call" | "finished" | "error";
@@ -33,6 +33,7 @@ export function SalesSimulatorClient() {
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
 
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -40,6 +41,7 @@ export function SalesSimulatorClient() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const transcriptRef = useRef<TranscriptTurn[]>([]);
   const liveProspectIdRef = useRef<string | null>(null);
+  const pendingUserTurnsRef = useRef(0);
 
   const updateTranscript = useCallback((updater: (previous: TranscriptTurn[]) => TranscriptTurn[]) => {
     setTranscript((previous) => {
@@ -62,6 +64,8 @@ export function SalesSimulatorClient() {
       audioRef.current = null;
     }
     liveProspectIdRef.current = null;
+    pendingUserTurnsRef.current = 0;
+    setIsMuted(false);
   }, []);
 
   useEffect(() => cleanUp, [cleanUp]);
@@ -80,6 +84,29 @@ export function SalesSimulatorClient() {
   const handleRealtimeEvent = useCallback((event: Record<string, unknown>) => {
     const type = event.type;
     if (process.env.NODE_ENV === "development") console.debug("[realtime]", event);
+
+    if (type === "input_audio_buffer.speech_stopped") {
+      pendingUserTurnsRef.current += 1;
+      return;
+    }
+
+    if (type === "response.created") {
+      if (pendingUserTurnsRef.current > 0) {
+        pendingUserTurnsRef.current -= 1;
+        return;
+      }
+
+      // Semantic VAD should create one response per completed speech turn.
+      // Cancel any orphan response before it can repeat the prospect's answer.
+      const response = event.response;
+      const responseId = response && typeof response === "object" && typeof (response as { id?: unknown }).id === "string"
+        ? (response as { id: string }).id
+        : undefined;
+      if (responseId && channelRef.current?.readyState === "open") {
+        channelRef.current.send(JSON.stringify({ type: "response.cancel", response_id: responseId }));
+      }
+      return;
+    }
 
     if (type === "conversation.item.input_audio_transcription.completed") {
       addCompletedTurn("me", event.transcript, typeof event.item_id === "string" ? event.item_id : undefined);
@@ -106,11 +133,23 @@ export function SalesSimulatorClient() {
     }
   }, [addCompletedTurn, updateTranscript]);
 
+  const toggleMute = useCallback(() => {
+    const audioTracks = streamRef.current?.getAudioTracks() ?? [];
+    if (!audioTracks.length) return;
+    const nextMuted = !isMuted;
+    audioTracks.forEach((track) => {
+      track.enabled = !nextMuted;
+    });
+    setIsMuted(nextMuted);
+  }, [isMuted]);
+
   const startCall = async () => {
     setError(null);
     setFeedback(null);
     setTranscript([]);
     transcriptRef.current = [];
+    pendingUserTurnsRef.current = 0;
+    setIsMuted(false);
     setStatus("connecting");
 
     try {
@@ -232,8 +271,13 @@ export function SalesSimulatorClient() {
           </div>
           <label htmlFor="access-code">Code d&apos;accès <small>(si activé sur Vercel)</small></label>
           <input id="access-code" type="password" autoComplete="off" value={accessCode} onChange={(event) => setAccessCode(event.target.value)} disabled={active} placeholder="Optionnel" />
-          <div className="scenario-note"><span>PROSPECT SÉLECTIONNÉ</span><strong>{SCENARIOS.find((item) => item.id === scenario)?.label}</strong><p>{difficulty} · Français suisse romand</p></div>
-          {!active ? <button className="primary-call" onClick={startCall}><Phone size={18} /> Démarrer l&apos;appel</button> : <button className="end-call" onClick={finishCall}><PhoneOff size={18} /> Terminer l&apos;appel</button>}
+          <div className="scenario-note"><span>PROSPECT SÉLECTIONNÉ</span><strong>{SCENARIOS.find((item) => item.id === scenario)?.label}</strong><p>{difficulty} · Marc, restaurateur valaisan</p></div>
+          {!active ? <button className="primary-call" onClick={startCall}><Phone size={18} /> Démarrer l&apos;appel</button> : <div className="call-controls">
+            <button className={`mute-call ${isMuted ? "is-muted" : ""}`} type="button" onClick={toggleMute} disabled={status !== "in-call"} aria-pressed={isMuted}>
+              {isMuted ? <MicOff size={18} /> : <Mic size={18} />} {isMuted ? "Réactiver le micro" : "Couper le micro"}
+            </button>
+            <button className="end-call" type="button" onClick={finishCall}><PhoneOff size={18} /> Terminer</button>
+          </div>}
           <p className="micro-note"><Mic size={14} /> Le micro sera demandé au démarrage.</p>
         </aside>
 
@@ -241,13 +285,13 @@ export function SalesSimulatorClient() {
           <div className="panel-heading"><div><p className="section-kicker">Conversation</p><h2>Transcription live</h2></div><Volume2 size={20} /></div>
           <div className="call-visual">
             <div className={`orb ${status === "in-call" ? "orb-active" : ""}`}><span>AI</span></div>
-            <div><strong>{status === "in-call" ? "Prospect en ligne" : "Prêt pour la simulation"}</strong><p>{status === "in-call" ? "Parle naturellement, l'IA peut te répondre et t'interrompre." : "Choisis un scénario puis démarre l'appel."}</p></div>
+            <div><strong>{status === "in-call" ? (isMuted ? "Micro coupé" : "Marc est en ligne") : "Prêt pour la simulation"}</strong><p>{status === "in-call" ? (isMuted ? "Le prospect ne reçoit plus le son de ton micro." : "Parle naturellement, Marc peut répondre et t'interrompre.") : "Choisis un scénario puis démarre l'appel."}</p></div>
           </div>
           <div className="transcript" aria-live="polite">
             {!transcript.length && <div className="empty-state"><Mic size={24} /><p>La transcription de ton échange apparaîtra ici.</p></div>}
             {transcript.map((turn) => <EventBubble key={turn.id} turn={turn} />)}
           </div>
-          {active && <div className="live-footer"><span className="pulse" /> Appel live sécurisé via WebRTC</div>}
+          {active && <div className="live-footer"><span className={`pulse ${isMuted ? "pulse-muted" : ""}`} /> {isMuted ? "Micro coupé — Marc ne t'entend pas" : "Appel live sécurisé via WebRTC"}</div>}
         </section>
       </section>
 
