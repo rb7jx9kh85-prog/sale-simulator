@@ -19,9 +19,19 @@ Ouvre ensuite [http://localhost:3000/sales-simulator](http://localhost:3000/sale
 OPENAI_API_KEY=sk-proj-...
 OPENAI_REALTIME_MODEL=gpt-realtime-2.1
 OPENAI_FEEDBACK_MODEL=gpt-4.1-mini
+SALES_SIMULATOR_ACCESS_CODE=un-code-long-et-prive
 ```
 
 `OPENAI_API_KEY` n'est utilisée que dans les route handlers serveur (`/api/realtime` et `/api/feedback`). Elle n'est jamais envoyée au navigateur. `OPENAI_REALTIME_MODEL` est configurable pour permettre d'utiliser un modèle compatible et économique disponible sur ton compte.
+
+## Déploiement Vercel
+
+1. Importe le dépôt GitHub dans Vercel, sans modifier les commandes : `npm run build` est détecté automatiquement.
+2. Dans **Project settings → Environment Variables**, ajoute `OPENAI_API_KEY`, `OPENAI_REALTIME_MODEL` et `OPENAI_FEEDBACK_MODEL` pour **Production**. Ne crée jamais de variables `NEXT_PUBLIC_OPENAI_*`.
+3. Ajoute aussi `SALES_SIMULATOR_ACCESS_CODE` : c'est fortement recommandé puisque ton URL Vercel sera publique. Tu taperas ce code dans l'interface, et les deux routes API le vérifieront côté serveur avant toute dépense OpenAI.
+4. Déploie. Vercel fournit HTTPS, indispensable pour l'autorisation microphone. Les fonctions sont configurées sur la région de Francfort (`fra1`) pour une latence plus basse depuis la Suisse.
+
+Les messages d'erreur OpenAI détaillés restent dans les logs Vercel. En production, le navigateur ne reçoit pas la réponse brute d'OpenAI.
 
 ## Architecture minimale
 
