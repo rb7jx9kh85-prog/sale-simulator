@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { buildProspectInstructions, type Difficulty, type ScenarioId } from "@/lib/sales-simulator";
+import { buildProspectInstructions, DIFFICULTIES, SCENARIOS, type Difficulty, type ScenarioId } from "@/lib/sales-simulator";
+import { hasValidSimulatorAccess } from "@/lib/server/simulator-access";
 
 export const runtime = "nodejs";
+export const preferredRegion = "fra1";
+export const maxDuration = 30;
 
 type CallPayload = { sdp?: string; scenario?: ScenarioId; difficulty?: Difficulty };
 
 export async function POST(request: NextRequest) {
+  if (!hasValidSimulatorAccess(request.headers.get("x-sales-simulator-access-code"))) {
+    return NextResponse.json({ error: "Code d'accès requis ou incorrect." }, { status: 401 });
+  }
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return NextResponse.json({ error: "OPENAI_API_KEY est absente côté serveur." }, { status: 500 });
@@ -18,15 +25,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Requête de session invalide." }, { status: 400 });
   }
 
-  if (!payload.sdp || !payload.scenario || !payload.difficulty) {
+  const validScenario = SCENARIOS.some((item) => item.id === payload.scenario);
+  const validDifficulty = DIFFICULTIES.some((item) => item === payload.difficulty);
+  if (!payload.sdp || !validScenario || !validDifficulty) {
     return NextResponse.json({ error: "SDP, scénario ou difficulté manquant." }, { status: 400 });
   }
 
+  const selectedScenario = payload.scenario as ScenarioId;
+  const selectedDifficulty = payload.difficulty as Difficulty;
   const model = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2.1";
   const session = {
     type: "realtime",
     model,
-    instructions: buildProspectInstructions(payload.scenario, payload.difficulty),
+    instructions: buildProspectInstructions(selectedScenario, selectedDifficulty),
     audio: {
       input: {
         transcription: { model: "gpt-4o-transcribe", language: "fr" },
@@ -45,7 +56,6 @@ export async function POST(request: NextRequest) {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        "OpenAI-Safety-Identifier": "alpinia-sales-simulator",
       },
       body: form,
       cache: "no-store",
@@ -54,12 +64,17 @@ export async function POST(request: NextRequest) {
     const responseBody = await openaiResponse.text();
     if (!openaiResponse.ok) {
       console.error("Realtime session error", openaiResponse.status, responseBody);
-      return NextResponse.json({ error: "OpenAI a refusé la session Realtime.", details: responseBody }, { status: openaiResponse.status });
+      return NextResponse.json(
+        process.env.NODE_ENV === "development"
+          ? { error: "OpenAI a refusé la session Realtime.", details: responseBody }
+          : { error: "OpenAI a refusé la session Realtime. Vérifie le modèle et les variables Vercel." },
+        { status: openaiResponse.status },
+      );
     }
 
     return new NextResponse(responseBody, {
       status: 200,
-      headers: { "Content-Type": "application/sdp", "Cache-Control": "no-store" },
+      headers: { "Content-Type": "application/sdp", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
     });
   } catch (error) {
     console.error("Realtime session network error", error);
