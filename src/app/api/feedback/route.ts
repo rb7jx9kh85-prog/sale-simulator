@@ -21,6 +21,50 @@ const SCORECARD = [
   "Fluidité globale",
 ];
 
+type FeedbackResult = {
+  score: number;
+  strengths: string[];
+  biggestMistakes: string[];
+  exactPhrases: string[];
+  improvedTransition: string;
+  improvedClosing: string;
+  nextCallTip: string;
+  scorecard: Array<{ criterion: string; score: number; note: string }>;
+};
+
+function readOutputText(response: unknown) {
+  if (!response || typeof response !== "object") return null;
+  const payload = response as { output_text?: unknown; output?: unknown };
+  if (typeof payload.output_text === "string" && payload.output_text.trim()) return payload.output_text;
+  if (!Array.isArray(payload.output)) return null;
+
+  for (const item of payload.output) {
+    if (!item || typeof item !== "object") continue;
+    const content = (item as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+      const text = (part as { text?: unknown }).text;
+      if (typeof text === "string" && text.trim()) return text;
+    }
+  }
+  return null;
+}
+
+function isFeedbackResult(value: unknown): value is FeedbackResult {
+  if (!value || typeof value !== "object") return false;
+  const feedback = value as Partial<FeedbackResult>;
+  return typeof feedback.score === "number"
+    && Array.isArray(feedback.strengths)
+    && Array.isArray(feedback.biggestMistakes)
+    && Array.isArray(feedback.exactPhrases)
+    && typeof feedback.improvedTransition === "string"
+    && typeof feedback.improvedClosing === "string"
+    && typeof feedback.nextCallTip === "string"
+    && Array.isArray(feedback.scorecard)
+    && feedback.scorecard.length === SCORECARD.length;
+}
+
 export async function POST(request: NextRequest) {
   if (!hasValidSimulatorAccess(request.headers.get("x-sales-simulator-access-code"))) {
     return NextResponse.json({ error: "Code d'accès requis ou incorrect." }, { status: 401 });
@@ -90,7 +134,7 @@ Donne un coaching concret, en français, sans inventer ce que Noé n'a pas dit. 
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: process.env.OPENAI_FEEDBACK_MODEL || "gpt-4.1-mini",
+        model: process.env.OPENAI_FEEDBACK_MODEL || "gpt-4o-mini",
         instructions,
         input: formattedTranscript,
         text: { format: { type: "json_schema", name: "sales_call_feedback", strict: true, schema } },
@@ -109,11 +153,19 @@ Donne un coaching concret, en français, sans inventer ce que Noé n'a pas dit. 
       );
     }
 
-    const payload = JSON.parse(raw) as { output_text?: string };
-    if (!payload.output_text) throw new Error("Réponse OpenAI sans output_text");
-    return NextResponse.json(JSON.parse(payload.output_text));
+    const outputText = readOutputText(JSON.parse(raw));
+    if (!outputText) throw new Error("Réponse OpenAI sans texte exploitable");
+    const feedback = JSON.parse(outputText);
+    if (!isFeedbackResult(feedback)) throw new Error("Réponse OpenAI de feedback incomplète");
+    return NextResponse.json(feedback);
   } catch (error) {
     console.error("Feedback generation error", error);
-    return NextResponse.json({ error: "Le feedback n'a pas pu être généré. Réessaie dans quelques instants." }, { status: 502 });
+    const reason = error instanceof Error ? error.message : "erreur inconnue";
+    return NextResponse.json(
+      process.env.NODE_ENV === "development"
+        ? { error: "Le feedback n'a pas pu être généré.", details: reason }
+        : { error: "Le feedback n'a pas pu être généré. Vérifie OPENAI_FEEDBACK_MODEL et les logs de la fonction /api/feedback sur Vercel." },
+      { status: 502 },
+    );
   }
 }
