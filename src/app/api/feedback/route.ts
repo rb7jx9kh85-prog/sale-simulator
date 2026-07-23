@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { Difficulty, ScenarioId, TranscriptTurn } from "@/lib/sales-simulator";
+import { DIFFICULTIES, SCENARIOS, type Difficulty, type ScenarioId, type TranscriptTurn } from "@/lib/sales-simulator";
+import { hasValidSimulatorAccess } from "@/lib/server/simulator-access";
 
 export const runtime = "nodejs";
+export const preferredRegion = "fra1";
+export const maxDuration = 60;
 
 const SCORECARD = [
   "Ouverture / pattern interrupt",
@@ -19,6 +22,10 @@ const SCORECARD = [
 ];
 
 export async function POST(request: NextRequest) {
+  if (!hasValidSimulatorAccess(request.headers.get("x-sales-simulator-access-code"))) {
+    return NextResponse.json({ error: "Code d'accès requis ou incorrect." }, { status: 401 });
+  }
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return NextResponse.json({ error: "OPENAI_API_KEY est absente côté serveur." }, { status: 500 });
 
@@ -29,14 +36,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Requête de feedback invalide." }, { status: 400 });
   }
 
-  if (!body.transcript?.length) {
+  const validScenario = SCENARIOS.some((item) => item.id === body.scenario);
+  const validDifficulty = DIFFICULTIES.some((item) => item === body.difficulty);
+  if (!body.transcript?.length || body.transcript.length > 120 || !validScenario || !validDifficulty) {
     return NextResponse.json({ error: "La transcription est vide : impossible de produire un feedback fiable." }, { status: 400 });
   }
 
   const formattedTranscript = body.transcript
-    .filter((turn) => turn.text.trim())
-    .map((turn) => `${turn.speaker === "me" ? "NOÉ" : "PROSPECT"}: ${turn.text.trim()}`)
+    .filter((turn) => (turn.speaker === "me" || turn.speaker === "prospect") && typeof turn.text === "string" && turn.text.trim())
+    .map((turn) => `${turn.speaker === "me" ? "NOÉ" : "PROSPECT"}: ${turn.text.trim().slice(0, 2_000)}`)
     .join("\n");
+
+  if (!formattedTranscript) {
+    return NextResponse.json({ error: "La transcription n'est pas exploitable." }, { status: 400 });
+  }
 
   const schema = {
     type: "object",
@@ -88,7 +101,12 @@ Donne un coaching concret, en français, sans inventer ce que Noé n'a pas dit. 
     const raw = await response.text();
     if (!response.ok) {
       console.error("Feedback API error", response.status, raw);
-      return NextResponse.json({ error: "OpenAI n'a pas pu générer le feedback.", details: raw }, { status: response.status });
+      return NextResponse.json(
+        process.env.NODE_ENV === "development"
+          ? { error: "OpenAI n'a pas pu générer le feedback.", details: raw }
+          : { error: "OpenAI n'a pas pu générer le feedback. Réessaie dans quelques instants." },
+        { status: response.status },
+      );
     }
 
     const payload = JSON.parse(raw) as { output_text?: string };
