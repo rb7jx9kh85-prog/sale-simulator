@@ -27,6 +27,7 @@ function EventBubble({ turn }: { turn: TranscriptTurn }) {
 export function SalesSimulatorClient() {
   const [scenario, setScenario] = useState<ScenarioId>("restaurant");
   const [difficulty, setDifficulty] = useState<Difficulty>("Normal");
+  const [accessCode, setAccessCode] = useState("");
   const [status, setStatus] = useState<CallStatus>("ready");
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
@@ -150,7 +151,10 @@ export function SalesSimulatorClient() {
       await peer.setLocalDescription(offer);
       const response = await fetch("/api/realtime", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessCode ? { "x-sales-simulator-access-code": accessCode } : {}),
+        },
         body: JSON.stringify({ sdp: offer.sdp, scenario, difficulty }),
       });
       const answerSdp = await response.text();
@@ -185,7 +189,10 @@ export function SalesSimulatorClient() {
     try {
       const response = await fetch("/api/feedback", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessCode ? { "x-sales-simulator-access-code": accessCode } : {}),
+        },
         body: JSON.stringify({ transcript: turns, scenario, difficulty }),
       });
       const data = await response.json();
@@ -223,6 +230,8 @@ export function SalesSimulatorClient() {
           <div className="difficulty-grid">
             {DIFFICULTIES.map((item) => <button key={item} type="button" className={difficulty === item ? "selected" : ""} onClick={() => setDifficulty(item)} disabled={active}>{item}</button>)}
           </div>
+          <label htmlFor="access-code">Code d&apos;accès <small>(si activé sur Vercel)</small></label>
+          <input id="access-code" type="password" autoComplete="off" value={accessCode} onChange={(event) => setAccessCode(event.target.value)} disabled={active} placeholder="Optionnel" />
           <div className="scenario-note"><span>PROSPECT SÉLECTIONNÉ</span><strong>{SCENARIOS.find((item) => item.id === scenario)?.label}</strong><p>{difficulty} · Français suisse romand</p></div>
           {!active ? <button className="primary-call" onClick={startCall}><Phone size={18} /> Démarrer l&apos;appel</button> : <button className="end-call" onClick={finishCall}><PhoneOff size={18} /> Terminer l&apos;appel</button>}
           <p className="micro-note"><Mic size={14} /> Le micro sera demandé au démarrage.</p>
