@@ -38,13 +38,18 @@ export async function POST(request: NextRequest) {
     type: "realtime",
     model,
     instructions: buildProspectInstructions(selectedScenario, selectedDifficulty),
+    // Let the model use its full per-response allowance when it needs to reason.
+    // Spoken turns remain short because verbosity is controlled by the prompt.
+    max_output_tokens: "inf",
+    reasoning: { effort: "low" },
     audio: {
       input: {
         transcription: { model: "gpt-4o-transcribe", language: "fr" },
-        // Auto avoids splitting a caller's sentence into several responses while preserving natural barge-in.
-        turn_detection: { type: "semantic_vad", eagerness: "auto", create_response: true, interrupt_response: true },
+        // Low eagerness treats short hesitations as part of the same sentence,
+        // which prevents the model from answering twice to one user turn.
+        turn_detection: { type: "semantic_vad", eagerness: "low", create_response: true, interrupt_response: true },
       },
-      output: { voice: "marin" },
+      output: { voice: "cedar" },
     },
   };
 
