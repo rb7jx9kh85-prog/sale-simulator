@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
   const selectedScenario = payload.scenario as ScenarioId;
   const selectedDifficulty = payload.difficulty as Difficulty;
   const model = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2.1";
+  const eagerness = selectedDifficulty === "Shark Tank" || selectedDifficulty === "Dur" ? "high" : "auto";
   const session = {
     type: "realtime",
     model,
@@ -41,7 +42,8 @@ export async function POST(request: NextRequest) {
     audio: {
       input: {
         transcription: { model: "gpt-4o-transcribe", language: "fr" },
-        turn_detection: { type: "semantic_vad", eagerness: "auto", create_response: true, interrupt_response: true },
+        // High eagerness makes difficult prospects take their turn sooner after a pause.
+        turn_detection: { type: "semantic_vad", eagerness, create_response: true, interrupt_response: true },
       },
       output: { voice: "marin" },
     },
