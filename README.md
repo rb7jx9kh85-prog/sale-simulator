@@ -18,7 +18,7 @@ Ouvre ensuite [http://localhost:3000/sales-simulator](http://localhost:3000/sale
 ```env
 OPENAI_API_KEY=sk-proj-...
 OPENAI_REALTIME_MODEL=gpt-realtime-2.1
-OPENAI_FEEDBACK_MODEL=gpt-4.1-mini
+OPENAI_FEEDBACK_MODEL=gpt-4o-mini
 SALES_SIMULATOR_ACCESS_CODE=un-code-long-et-prive
 ```
 
